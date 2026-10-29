@@ -1,0 +1,32 @@
+name: CC connectivity
+
+# Probe CommandCode API (api.commandcode.ai) reachability + auth from an
+# Actions runner. Manual trigger by default; also runs when the probe itself
+# changes. The API key lives in the CMD_API_KEY repo secret and is never
+# printed — the script masks everything.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/cc-connectivity.sh'
+      - '.github/workflows/cc-connectivity.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cc-connectivity
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe CommandCode API
+        env:
+          CMD_API_KEY: ${{ secrets.CMD_API_KEY }}
+          CC_API_BASE: https://api.commandcode.ai
+        run: bash scripts/cc-connectivity.sh
