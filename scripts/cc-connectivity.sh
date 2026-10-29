@@ -3,10 +3,14 @@
 #
 # Stage 1  GET  {base}/health          — informational; any HTTP response
 #                                        proves DNS + TLS + egress reachability.
-# Stage 2  POST {base}/alpha/generate  — with the full official CLI header set
-#                                        (CC inspects these and rejects
-#                                        non-CLI-looking clients) and a minimal
-#                                        valid body.
+# Stage 2  POST {base}/alpha/generate  — one authenticated request with the
+#                                        full official CLI header set.
+#
+# VERDICT (2026-10-30): CC actively detects non-CLI use of this endpoint and
+# answers 400 "Proxy use detected ... violates the TOS and will result in
+# account ban". A probe from GitHub Actions runners is detected even with the
+# exact CLI headers, so stage 2 treats that verdict as the *expected* outcome
+# and exits 0. The subscription must not be proxied from CI — see README.
 #
 # The CLI version is resolved live from the npm registry, mirroring ccproxy's
 # cli_version.rs behaviour, so the probe keeps working as CC bumps minVersion.
@@ -94,14 +98,22 @@ HTTP_CODE=$(curl -sS --max-time 90 -o /tmp/cc-resp.json -w '%{http_code}' \
   --data "$BODY") || fail "generate request failed at transport level"
 
 echo "http=${HTTP_CODE}"
-if [ "$HTTP_CODE" != "200" ]; then
-  echo "--- response body (first 500 bytes) ---"
-  head -c 500 /tmp/cc-resp.json; echo
-  fail "generate returned HTTP ${HTTP_CODE}"
+echo "--- response body (first 500 bytes) ---"
+head -c 500 /tmp/cc-resp.json; echo
+
+if [ "$HTTP_CODE" = "200" ]; then
+  SIZE=$(wc -c < /tmp/cc-resp.json)
+  echo
+  echo "OK: generate returned 200 with ${SIZE} bytes (unexpected — CC policy changed?)"
+  exit 0
 fi
 
-echo "--- response head (first 400 bytes) ---"
-head -c 400 /tmp/cc-resp.json; echo
-SIZE=$(wc -c < /tmp/cc-resp.json)
-echo
-echo "OK: CC connectivity verified — generate returned 200 with ${SIZE} bytes"
+# Expected outcome: CC rejects non-CLI use of the subscription endpoint.
+if grep -q 'Proxy use detected' /tmp/cc-resp.json 2>/dev/null; then
+  echo
+  echo "VERDICT: CC proxy-detection confirmed from CI (HTTP ${HTTP_CODE})."
+  echo "Network + auth layers are fine; the subscription endpoint is CLI-only by policy."
+  exit 0
+fi
+
+fail "generate returned HTTP ${HTTP_CODE} (unexpected response, investigate)"
